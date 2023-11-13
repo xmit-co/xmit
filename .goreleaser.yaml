@@ -1,0 +1,5 @@
+archives:
+- id: zip
+  format: zip
+- id: txz
+  format: txz
