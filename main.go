@@ -62,10 +62,10 @@ func main() {
 		fmt.Println("🗝️ Enter your key (no echo):")
 		key, err := term.ReadPassword(int(syscall.Stdin))
 		if err != nil {
-			log.Fatalf("Failed to read key (%s)", err)
+			log.Fatalf("⚠️ Failed to read key (%s)", err)
 		}
 		if err := storeKey(string(key)); err != nil {
-			log.Fatalf("Failed to store key (%s)", err)
+			log.Fatalf("⚠️ Failed to store key (%s)", err)
 		}
 		os.Exit(0)
 	}
@@ -83,36 +83,36 @@ func main() {
 
 	key := findKey()
 	if key == "" {
-		log.Fatalf("No key found. Set XMIT_KEY or run 'xmit set-key' to set one.")
+		log.Fatalf("⚠️ No key found. Set XMIT_KEY or run 'xmit set-key' to set one.")
 	}
 
 	log.Println("📦 Bundling…")
 	b, err := ingest(directory)
 	if err != nil {
-		log.Fatalf("Failed to ingest (%s)", err)
+		log.Fatalf("⚠️ Failed to ingest (%s)", err)
 	}
 	bb, err := client.EncMode.Marshal(b.Node)
 	if err != nil {
-		log.Fatalf("Failed to marshal (%s)", err)
+		log.Fatalf("⚠️ Failed to marshal (%s)", err)
 	}
 
 	bytes := 0
 	for _, value := range b.contents {
 		bytes += len(value)
 	}
-	log.Printf("Bundled %d files (%d bytes)", len(b.contents), bytes)
+	log.Printf("🎁 Bundled %d files (%d bytes)", len(b.contents), bytes)
 
 	bbh := blake3.Sum256(bb)
 	toUpload := make(map[protocol.Hash][]byte)
 
 	suggestResp, err := client.SuggestBundle(key, domain, bbh)
 	if err != nil {
-		log.Fatalf("Failed to suggest bundle (%s)", err)
+		log.Fatalf("⚠️ Failed to suggest bundle (%s)", err)
 	}
 
 	printMessages(suggestResp.Response)
 	if !suggestResp.Response.Success {
-		log.Fatalf("Bundle suggestion failed")
+		log.Fatalf("⚠️ Bundle suggestion failed")
 	}
 
 	for _, h := range suggestResp.Missing {
@@ -122,12 +122,12 @@ func main() {
 	if !suggestResp.Present {
 		bundleResp, err := client.UploadBundle(key, domain, bb)
 		if err != nil {
-			log.Fatalf("Failed to upload (%s)", err)
+			log.Fatalf("⚠️ Failed to upload (%s)", err)
 		}
 
 		printMessages(bundleResp.Response)
 		if !bundleResp.Response.Success {
-			log.Fatalf("Bundle upload failed")
+			log.Fatalf("⚠️ Bundle upload failed")
 		}
 
 		for _, h := range bundleResp.Missing {
@@ -138,39 +138,39 @@ func main() {
 	if len(toUpload) > 0 {
 		missingResp, err := client.UploadMissing(key, domain, toUpload)
 		if err != nil {
-			log.Fatalf("Failed to upload (%s)", err)
+			log.Fatalf("⚠️ Failed to upload (%s)", err)
 		}
 
 		printMessages(missingResp.Response)
 		if !missingResp.Response.Success {
-			log.Fatalf("Missing parts upload failed")
+			log.Fatalf("⚠️ Missing parts upload failed")
 		}
 	}
 
 	finalizeResp, err := client.Finalize(key, domain, bbh)
 	if err != nil {
-		log.Fatalf("Failed to finalize (%s)", err)
+		log.Fatalf("⚠️ Failed to finalize (%s)", err)
 	}
 
 	printMessages(finalizeResp.Response)
 	if !finalizeResp.Response.Success {
-		log.Fatalf("Finalization failed")
+		log.Fatalf("⚠️ Finalization failed")
 	}
 
-	log.Printf("Visible at URL: %s", finalizeResp.URL)
+	log.Printf("🌐 Visible at URL: %s", finalizeResp.URL)
 }
 
 func printMessages(resp protocol.Response) {
 	errs := resp.Errors
 	if len(errs) > 0 {
 		for _, err := range errs {
-			color.Red("Received error: %v", err)
+			color.Red("🔴 Received error: %v", err)
 		}
 	}
 	warns := resp.Warnings
 	if len(warns) > 0 {
 		for _, warn := range warns {
-			color.Yellow("Received warning: %v", warn)
+			color.Yellow("🟡 Received warning: %v", warn)
 		}
 	}
 }
