@@ -203,6 +203,7 @@ func traverse(directory string, node *protocol.Node, contents *map[protocol.Hash
 		p := filepath.Join(directory, entry.Name())
 		if entry.IsDir() {
 			if entry.Name() == ".git" {
+				log.Printf("😇 Skipping %s", p)
 				continue
 			}
 			child := protocol.Node{}
