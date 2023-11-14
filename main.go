@@ -77,6 +77,10 @@ func main() {
 	} else {
 		directory = "."
 	}
+	directory, err := filepath.Abs(directory)
+	if err != nil {
+		log.Fatalf("⚠️ Failed to get absolute path (%s)", err)
+	}
 
 	client := protocol.NewClient()
 
@@ -85,7 +89,7 @@ func main() {
 		log.Fatalf("⚠️ No key found. Set XMIT_KEY or run 'xmit set-key' to set one.")
 	}
 
-	log.Println("📦 Bundling…")
+	log.Printf("📦 Bundling %s…", directory)
 	b, err := ingest(directory)
 	if err != nil {
 		log.Fatalf("⚠️ Failed to ingest (%s)", err)
