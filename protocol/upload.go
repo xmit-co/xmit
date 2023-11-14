@@ -101,7 +101,7 @@ type FinalizeUploadResponse struct {
 func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestResponse, error) {
 	var b bytes.Buffer
 	bf := bufio.NewWriter(&b)
-	z, err := zstd.NewWriter(bf)
+	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestRespo
 func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadResponse, error) {
 	var b bytes.Buffer
 	bf := bufio.NewWriter(&b)
-	z, err := zstd.NewWriter(bf)
+	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadR
 func (c *Client) UploadMissing(key string, domain string, parts [][]byte) (*MissingUploadResponse, error) {
 	var b bytes.Buffer
 	bf := bufio.NewWriter(&b)
-	z, err := zstd.NewWriter(bf)
+	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func (c *Client) UploadMissing(key string, domain string, parts [][]byte) (*Miss
 func (c *Client) Finalize(key string, domain string, id Hash) (*FinalizeUploadResponse, error) {
 	var b bytes.Buffer
 	bf := bufio.NewWriter(&b)
-	z, err := zstd.NewWriter(bf)
+	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 	if err != nil {
 		return nil, err
 	}
