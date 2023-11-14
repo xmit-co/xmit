@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/fatih/color"
 	"github.com/kirsle/configdir"
 	"github.com/xmit-co/xmit/protocol"
 	"github.com/zeebo/blake3"
@@ -164,13 +163,13 @@ func printMessages(resp protocol.Response) {
 	errs := resp.Errors
 	if len(errs) > 0 {
 		for _, err := range errs {
-			color.Red("🔴 Received error: %v", err)
+			log.Printf("🔴 Received error: \033[91m%v\033[0m", err)
 		}
 	}
 	warns := resp.Warnings
 	if len(warns) > 0 {
 		for _, warn := range warns {
-			color.Yellow("🟡 Received warning: %v", warn)
+			log.Printf("🟡 Received warning: \033[93m%v\033[0m", warn)
 		}
 	}
 }
