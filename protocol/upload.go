@@ -134,10 +134,10 @@ func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestRespo
 	}
 	var r BundleSuggestResponse
 	zd, err := zstd.NewReader(resp.Body)
-	defer zd.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer zd.Close()
 	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
 		return nil, err
 	}
@@ -180,10 +180,10 @@ func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadR
 	}
 	var r BundleUploadResponse
 	zd, err := zstd.NewReader(resp.Body)
-	defer zd.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer zd.Close()
 	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
 		return nil, err
 	}
@@ -226,10 +226,10 @@ func (c *Client) UploadMissing(key string, domain string, parts map[Hash][]byte)
 	}
 	var r MissingUploadResponse
 	zd, err := zstd.NewReader(resp.Body)
-	defer zd.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer zd.Close()
 	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
 		return nil, err
 	}
@@ -272,10 +272,10 @@ func (c *Client) Finalize(key string, domain string, id Hash) (*FinalizeUploadRe
 	}
 	var r FinalizeUploadResponse
 	zd, err := zstd.NewReader(resp.Body)
-	defer zd.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer zd.Close()
 	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
 		return nil, err
 	}
