@@ -50,6 +50,7 @@ type Response struct {
 	Success  bool     `cbor:"1,keyasint"`
 	Errors   []string `cbor:"2,keyasint,omitempty"`
 	Warnings []string `cbor:"3,keyasint,omitempty"`
+	Messages []string `cbor:"4,keyasint,omitempty"`
 }
 
 type BundleSuggestRequest struct {
@@ -78,9 +79,9 @@ type BundleUploadResponse struct {
 
 type MissingUploadRequest struct {
 	Request
-	Domain string          `cbor:"5,keyasint,omitempty"`
-	ID     Hash            `cbor:"6,keyasint,omitempty"`
-	Parts  map[Hash][]byte `cbor:"7,keyasint,omitempty"`
+	Domain string   `cbor:"5,keyasint,omitempty"`
+	ID     Hash     `cbor:"6,keyasint,omitempty"`
+	Parts  [][]byte `cbor:"7,keyasint,omitempty"`
 }
 
 type MissingUploadResponse struct {
@@ -95,7 +96,6 @@ type FinalizeUploadRequest struct {
 
 type FinalizeUploadResponse struct {
 	Response
-	URL string `cbor:"5,keyasint,omitempty"`
 }
 
 func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestResponse, error) {
@@ -190,7 +190,7 @@ func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadR
 	return &r, nil
 }
 
-func (c *Client) UploadMissing(key string, domain string, parts map[Hash][]byte) (*MissingUploadResponse, error) {
+func (c *Client) UploadMissing(key string, domain string, parts [][]byte) (*MissingUploadResponse, error) {
 	var b bytes.Buffer
 	bf := bufio.NewWriter(&b)
 	z, err := zstd.NewWriter(bf)

@@ -106,7 +106,7 @@ func main() {
 	log.Printf("🎁 Bundled %d files (%d bytes)", len(b.contents), bytes)
 
 	bbh := blake3.Sum256(bb)
-	toUpload := make(map[protocol.Hash][]byte)
+	var toUpload [][]byte
 
 	suggestResp, err := client.SuggestBundle(key, domain, bbh)
 	if err != nil {
@@ -119,7 +119,7 @@ func main() {
 	}
 
 	for _, h := range suggestResp.Missing {
-		toUpload[h] = b.contents[h]
+		toUpload = append(toUpload, b.contents[h])
 	}
 
 	if !suggestResp.Present {
@@ -134,7 +134,7 @@ func main() {
 		}
 
 		for _, h := range bundleResp.Missing {
-			toUpload[h] = b.contents[h]
+			toUpload = append(toUpload, b.contents[h])
 		}
 	}
 
@@ -159,21 +159,26 @@ func main() {
 	if !finalizeResp.Response.Success {
 		log.Fatalf("⚠️ Finalization failed")
 	}
-
-	log.Printf("🌐 Visible at URL: %s", finalizeResp.URL)
 }
 
 func printMessages(resp protocol.Response) {
 	errs := resp.Errors
 	if len(errs) > 0 {
 		for _, err := range errs {
-			log.Printf("🔴 Received error: \033[91m%v\033[0m", err)
+			log.Printf("🛑 \033[91m%v\033[0m", err)
 		}
 	}
 	warns := resp.Warnings
 	if len(warns) > 0 {
 		for _, warn := range warns {
-			log.Printf("🟡 Received warning: \033[93m%v\033[0m", warn)
+			log.Printf("⚠️ \033[93m%v\033[0m", warn)
+		}
+	}
+
+	messages := resp.Messages
+	if len(messages) > 0 {
+		for _, message := range messages {
+			log.Println(message)
 		}
 	}
 }
