@@ -8,6 +8,5 @@ brews:
 - repository:
     owner: xmit-co
     name: homebrew-tap
-    branch: main
   description: 'Launch static websites on xmit.co'
   homepage: https://xmit.co/
