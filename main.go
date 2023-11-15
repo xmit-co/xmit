@@ -58,7 +58,7 @@ func main() {
 	}
 
 	if domain == "set-key" {
-		fmt.Println("🗝️ Enter your key (no echo):")
+		fmt.Println("🔑 Enter your key (no echo):")
 		key, err := term.ReadPassword(int(syscall.Stdin))
 		if err != nil {
 			log.Fatalf("🛑 Failed to read key (%s)", err)
