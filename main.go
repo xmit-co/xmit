@@ -61,10 +61,10 @@ func main() {
 		fmt.Println("🔑 Enter your key (no echo):")
 		key, err := term.ReadPassword(int(syscall.Stdin))
 		if err != nil {
-			log.Fatalf("🛑 Failed to read key (%s)", err)
+			log.Fatalf("🛑 Failed to read key: %v", err)
 		}
 		if err := storeKey(string(key)); err != nil {
-			log.Fatalf("🛑 Failed to store key (%s)", err)
+			log.Fatalf("🛑 Failed to store key: %v", err)
 		}
 		os.Exit(0)
 	}
@@ -79,24 +79,24 @@ func main() {
 	}
 	directory, err := filepath.Abs(directory)
 	if err != nil {
-		log.Fatalf("🛑 Failed to get absolute path (%s)", err)
+		log.Fatalf("🛑 Failed to get absolute path: %v", err)
 	}
 
 	client := protocol.NewClient()
 
 	key := findKey()
 	if key == "" {
-		log.Fatalf("🛑 No key found. Set XMIT_KEY or run 'xmit set-key' to set one.")
+		log.Fatalf("🛑 No key found. Set XMIT_KEY or run 'xmit set-key'.")
 	}
 
 	log.Printf("📦 Bundling %s…", directory)
 	b, err := ingest(directory)
 	if err != nil {
-		log.Fatalf("🛑 Failed to ingest (%s)", err)
+		log.Fatalf("🛑 Failed to ingest: %v", err)
 	}
 	bb, err := client.EncMode.Marshal(b.Node)
 	if err != nil {
-		log.Fatalf("🛑 Failed to marshal (%s)", err)
+		log.Fatalf("🛑 Failed to marshal: %v", err)
 	}
 
 	bytes := 0
@@ -110,7 +110,7 @@ func main() {
 
 	suggestResp, err := client.SuggestBundle(key, domain, bbh)
 	if err != nil {
-		log.Fatalf("🛑 Failed to suggest bundle (%s)", err)
+		log.Fatalf("🛑 Failed to suggest bundle: %v", err)
 	}
 
 	printMessages(suggestResp.Response)
@@ -125,7 +125,7 @@ func main() {
 	if !suggestResp.Present {
 		bundleResp, err := client.UploadBundle(key, domain, bb)
 		if err != nil {
-			log.Fatalf("🛑 Failed to upload (%s)", err)
+			log.Fatalf("🛑 Failed to upload: %v", err)
 		}
 
 		printMessages(bundleResp.Response)
@@ -141,7 +141,7 @@ func main() {
 	if len(toUpload) > 0 {
 		missingResp, err := client.UploadMissing(key, domain, toUpload)
 		if err != nil {
-			log.Fatalf("🛑 Failed to upload (%s)", err)
+			log.Fatalf("🛑 Failed to upload: %v", err)
 		}
 
 		printMessages(missingResp.Response)
@@ -152,7 +152,7 @@ func main() {
 
 	finalizeResp, err := client.Finalize(key, domain, bbh)
 	if err != nil {
-		log.Fatalf("🛑 Failed to finalize (%s)", err)
+		log.Fatalf("🛑 Failed to finalize: %v", err)
 	}
 
 	printMessages(finalizeResp.Response)

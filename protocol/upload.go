@@ -121,7 +121,7 @@ func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestRespo
 	if err = bf.Flush(); err != nil {
 		return nil, err
 	}
-	log.Printf("🤔 Suggesting bundle by hash (%d bytes)…", b.Len())
+	log.Print("🤔 Suggesting bundle…")
 	resp, err := c.client.Post(c.Url+bundleSuggestEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
 	if err != nil {
 		return nil, err
@@ -213,7 +213,11 @@ func (c *Client) UploadMissing(key string, domain string, parts [][]byte) (*Miss
 	if err = bf.Flush(); err != nil {
 		return nil, err
 	}
-	log.Printf("🏃 Uploading %d missing parts (%d bytes)…", len(parts), b.Len())
+	if len(parts) == 1 {
+		log.Printf("🏃 Uploading 1 missing part (%d bytes)…", b.Len())
+	} else {
+		log.Printf("🏃 Uploading %d missing parts (%d bytes)…", len(parts), b.Len())
+	}
 	resp, err := c.client.Post(c.Url+missingUploadEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
 	if err != nil {
 		return nil, err
@@ -259,7 +263,7 @@ func (c *Client) Finalize(key string, domain string, id Hash) (*FinalizeUploadRe
 	if err = bf.Flush(); err != nil {
 		return nil, err
 	}
-	log.Printf("🏁 Finalizing (%v bytes)…", b.Len())
+	log.Print("🏁 Finalizing…")
 	resp, err := c.client.Post(c.Url+finalizeUploadEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
 	if err != nil {
 		return nil, err
