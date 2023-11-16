@@ -41,7 +41,7 @@ func storeKey(key string) error {
 }
 
 func usage() {
-	fmt.Println("Usage:\nxmit set-key\nxmit domain [directory]")
+	fmt.Println("Usage:\nxmit set-key (or set XMIT_KEY)\nxmit domain [directory]")
 }
 
 func main() {
