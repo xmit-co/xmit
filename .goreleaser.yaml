@@ -1,10 +1,13 @@
 archives:
 - id: zip
   format: zip
+  wrap_in_directory: true
 - id: txz
   format: txz
+  wrap_in_directory: true
 - id: tgz
   format: tgz
+  wrap_in_directory: true
 
 brews:
 - repository:
