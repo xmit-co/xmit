@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/klauspost/compress/zstd"
+	"github.com/xmit-co/xmit/progress"
 	"log"
 	"net/http"
 	"os"
@@ -122,7 +123,7 @@ func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestRespo
 		return nil, err
 	}
 	log.Print("🤔 Suggesting bundle…")
-	resp, err := c.client.Post(c.Url+bundleSuggestEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
+	resp, err := c.client.Post(c.Url+bundleSuggestEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes()))
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +169,7 @@ func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadR
 		return nil, err
 	}
 	log.Printf("🚶 Uploading bundle (%d bytes)…", b.Len())
-	resp, err := c.client.Post(c.Url+bundleUploadEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
+	resp, err := c.client.Post(c.Url+bundleUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes()))
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +219,7 @@ func (c *Client) UploadMissing(key string, domain string, parts [][]byte) (*Miss
 	} else {
 		log.Printf("🏃 Uploading %d missing parts (%d bytes)…", len(parts), b.Len())
 	}
-	resp, err := c.client.Post(c.Url+missingUploadEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
+	resp, err := c.client.Post(c.Url+missingUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes()))
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +265,7 @@ func (c *Client) Finalize(key string, domain string, id Hash) (*FinalizeUploadRe
 		return nil, err
 	}
 	log.Print("🏁 Finalizing…")
-	resp, err := c.client.Post(c.Url+finalizeUploadEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
+	resp, err := c.client.Post(c.Url+finalizeUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes()))
 	if err != nil {
 		return nil, err
 	}
