@@ -25,7 +25,7 @@ func NewReader(b []byte) io.Reader {
 
 func (p *Reader) Read(b []byte) (n int, err error) {
 	n, err = p.reader.Read(b[:min(len(b), 4096)])
-	if time.Since(p.lastUpdate) > time.Second {
+	if time.Since(p.lastUpdate) > time.Second || p.read+n == p.total {
 		fmt.Printf("\033[F\rProgress: %d/%d (%2d%%)\n", p.read, p.total, p.read*100/p.total)
 		p.lastUpdate = time.Now()
 	}
