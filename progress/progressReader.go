@@ -15,20 +15,26 @@ type Reader struct {
 }
 
 func NewReader(b []byte) io.Reader {
-	fmt.Println()
-	return &Reader{
+	reader := &Reader{
 		reader: bytes.NewReader(b),
 		total:  len(b),
 		read:   0,
 	}
+	fmt.Println()
+	reader.showProgress()
+	return reader
 }
 
-func (p *Reader) Read(b []byte) (n int, err error) {
-	n, err = p.reader.Read(b[:min(len(b), 4096)])
-	if time.Since(p.lastUpdate) > time.Second || p.read+n == p.total {
-		fmt.Printf("\033[F\rProgress: %d/%d (%2d%%)\n", p.read, p.total, p.read*100/p.total)
-		p.lastUpdate = time.Now()
+func (r *Reader) Read(b []byte) (n int, err error) {
+	n, err = r.reader.Read(b[:min(len(b), 4096)])
+	if time.Since(r.lastUpdate) > time.Second || r.read+n == r.total {
+		r.showProgress()
 	}
-	p.read += n
+	r.read += n
 	return
+}
+
+func (r *Reader) showProgress() {
+	fmt.Printf("\033[F\rProgress: %d/%d (%2d%%)\n", r.read, r.total, r.read*100/r.total)
+	r.lastUpdate = time.Now()
 }
