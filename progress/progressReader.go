@@ -35,6 +35,6 @@ func (r *Reader) Read(b []byte) (n int, err error) {
 }
 
 func (r *Reader) showProgress() {
-	fmt.Printf("\033[F\rProgress: %d/%d (%2d%%)\n", r.read, r.total, r.read*100/r.total)
+	fmt.Printf("\033[F\rUpload progress: %d/%d (%2d%%)\n", r.read, r.total, r.read*100/r.total)
 	r.lastUpdate = time.Now()
 }

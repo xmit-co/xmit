@@ -123,7 +123,7 @@ func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestRespo
 		return nil, err
 	}
 	log.Print("🤔 Suggesting bundle…")
-	resp, err := c.client.Post(c.Url+bundleSuggestEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes()))
+	resp, err := c.client.Post(c.Url+bundleSuggestEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +265,7 @@ func (c *Client) Finalize(key string, domain string, id Hash) (*FinalizeUploadRe
 		return nil, err
 	}
 	log.Print("🏁 Finalizing…")
-	resp, err := c.client.Post(c.Url+finalizeUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes()))
+	resp, err := c.client.Post(c.Url+finalizeUploadEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
 	if err != nil {
 		return nil, err
 	}
