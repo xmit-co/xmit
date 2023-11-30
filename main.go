@@ -41,7 +41,7 @@ func storeKey(key string) error {
 }
 
 func usage() {
-	fmt.Println("Usage:\nxmit set-key (or set XMIT_KEY)\nxmit domain [directory]")
+	fmt.Println("Usage:\nxmit set-key [key] (or set XMIT_KEY)\nxmit domain [directory]")
 }
 
 func main() {
@@ -58,12 +58,18 @@ func main() {
 	}
 
 	if domain == "set-key" {
-		fmt.Println("🔑 Enter your key (no echo):")
-		key, err := term.ReadPassword(int(syscall.Stdin))
-		if err != nil {
-			log.Fatalf("🛑 Failed to read key: %v", err)
+		var key string
+		if len(os.Args) > 2 {
+			key = os.Args[2]
+		} else {
+			fmt.Println("🔑 Enter your key (no echo):")
+			keyBytes, err := term.ReadPassword(int(syscall.Stdin))
+			if err != nil {
+				log.Fatalf("🛑 Failed to read key: %v", err)
+			}
+			key = string(keyBytes)
 		}
-		if err := storeKey(string(key)); err != nil {
+		if err := storeKey(key); err != nil {
 			log.Fatalf("🛑 Failed to store key: %v", err)
 		}
 		os.Exit(0)
