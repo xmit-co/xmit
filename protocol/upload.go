@@ -169,7 +169,7 @@ func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadR
 		return nil, err
 	}
 	log.Printf("🚶 Uploading bundle (%d bytes)…", b.Len())
-	resp, err := c.client.Post(c.Url+bundleUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes()))
+	resp, err := c.client.Post(c.Url+bundleUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes(), "🧘 Bundle upload complete, waiting for server…"))
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +219,7 @@ func (c *Client) UploadMissing(key string, domain string, parts [][]byte) (*Miss
 	} else {
 		log.Printf("🏃 Uploading %d missing parts (%d bytes)…", len(parts), b.Len())
 	}
-	resp, err := c.client.Post(c.Url+missingUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes()))
+	resp, err := c.client.Post(c.Url+missingUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes(), "🧘 Upload complete, waiting for server…"))
 	if err != nil {
 		return nil, err
 	}

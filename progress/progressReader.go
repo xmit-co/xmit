@@ -11,14 +11,16 @@ type Reader struct {
 	reader     io.Reader
 	total      int
 	read       int
+	endMessage string
 	lastUpdate time.Time
 }
 
-func NewReader(b []byte) io.Reader {
+func NewReader(b []byte, endMessage string) io.Reader {
 	reader := &Reader{
-		reader: bytes.NewReader(b),
-		total:  len(b),
-		read:   0,
+		reader:     bytes.NewReader(b),
+		total:      len(b),
+		read:       0,
+		endMessage: endMessage,
 	}
 	fmt.Println()
 	reader.showProgress()
@@ -27,8 +29,11 @@ func NewReader(b []byte) io.Reader {
 
 func (r *Reader) Read(b []byte) (n int, err error) {
 	n, err = r.reader.Read(b[:min(len(b), 4096)])
-	if time.Since(r.lastUpdate) > time.Second || r.read+n == r.total {
+	if time.Since(r.lastUpdate) > time.Second {
 		r.showProgress()
+	}
+	if r.read+n == r.total {
+		fmt.Println(r.endMessage)
 	}
 	r.read += n
 	return
