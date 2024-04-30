@@ -29,14 +29,13 @@ func NewReader(b []byte, endMessage string) io.Reader {
 
 func (r *Reader) Read(b []byte) (n int, err error) {
 	n, err = r.reader.Read(b[:min(len(b), 4096)])
-	finished := r.read+n == r.total
-	if finished || time.Since(r.lastUpdate) > time.Second {
+	r.read += n
+	if err == io.EOF || time.Since(r.lastUpdate) > time.Second {
 		r.showProgress()
 	}
-	if finished {
+	if err == io.EOF {
 		fmt.Println(r.endMessage)
 	}
-	r.read += n
 	return
 }
 
