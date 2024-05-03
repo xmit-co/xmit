@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"time"
 )
 
@@ -34,7 +35,7 @@ func (r *Reader) Read(b []byte) (n int, err error) {
 		r.showProgress()
 	}
 	if err == io.EOF {
-		fmt.Println(r.endMessage)
+		log.Println(r.endMessage)
 	}
 	return
 }
