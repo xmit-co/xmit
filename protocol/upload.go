@@ -215,9 +215,9 @@ func (c *Client) UploadMissing(key string, domain string, parts [][]byte) (*Miss
 		return nil, err
 	}
 	if len(parts) == 1 {
-		log.Printf("🏃 Uploading 1 missing part (%d bytes)…", b.Len())
+		log.Printf("🏃 Uploading 1 missing part (%d bytes compressed)…", b.Len())
 	} else {
-		log.Printf("🏃 Uploading %d missing parts (%d bytes)…", len(parts), b.Len())
+		log.Printf("🏃 Uploading %d missing parts (%d bytes compressed)…", len(parts), b.Len())
 	}
 	resp, err := c.client.Post(c.Url+missingUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes(), "🧘 Upload complete, waiting for server…"))
 	if err != nil {

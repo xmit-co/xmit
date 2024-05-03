@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"github.com/kirsle/configdir"
 	"github.com/xmit-co/xmit/protocol"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 )
@@ -42,6 +44,32 @@ func storeKey(key string) error {
 
 func usage() {
 	fmt.Println("Usage:\nxmit set-key [key] (or set XMIT_KEY)\nxmit domain [directory]")
+}
+
+func chunkSlice(data [][]byte, maxSize int) [][][]byte {
+	var result [][][]byte
+	var currentChunk [][]byte
+	var currentSize int
+
+	for _, item := range data {
+		itemSize := len(item)
+		// If adding this item to the current chunk exceeds maxSize, add the current chunk to result
+		// and start a new chunk.
+		if currentSize+itemSize > maxSize && currentSize > 0 {
+			result = append(result, currentChunk)
+			currentChunk = nil
+			currentSize = 0
+		}
+		// Add the item to the current chunk and update the current size.
+		currentChunk = append(currentChunk, item)
+		currentSize += itemSize
+	}
+	// Add the last chunk if it's not empty.
+	if len(currentChunk) > 0 {
+		result = append(result, currentChunk)
+	}
+
+	return result
 }
 
 func main() {
@@ -145,14 +173,25 @@ func main() {
 	}
 
 	if len(toUpload) > 0 {
-		missingResp, err := client.UploadMissing(key, domain, toUpload)
-		if err != nil {
-			log.Fatalf("🛑 Failed to upload: %v", err)
-		}
+		// Sort toUpload by decreasing size
+		slices.SortFunc(toUpload, func(i, j []byte) int {
+			return cmp.Compare(len(j), len(i))
+		})
 
-		printMessages(missingResp.Response)
-		if !missingResp.Response.Success {
-			log.Fatalf("🛑 Missing parts upload failed")
+		// Chunk toUpload into 10MB+ slices
+		chunks := chunkSlice(toUpload, 10*1024*1024)
+
+		for i, chunk := range chunks {
+			log.Printf("📤 Uploading chunk %d/%d…", i+1, len(chunks))
+			missingResp, err := client.UploadMissing(key, domain, chunk)
+			if err != nil {
+				log.Fatalf("🛑 Failed to upload: %v", err)
+			}
+
+			printMessages(missingResp.Response)
+			if !missingResp.Response.Success {
+				log.Fatalf("🛑 Missing parts upload failed")
+			}
 		}
 	}
 
