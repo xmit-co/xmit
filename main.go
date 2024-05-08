@@ -182,8 +182,7 @@ func main() {
 		chunks := chunkSlice(toUpload, 10*1024*1024)
 
 		for i, chunk := range chunks {
-			log.Printf("📤 Uploading chunk %d/%d…", i+1, len(chunks))
-			missingResp, err := client.UploadMissing(key, domain, chunk)
+			missingResp, err := client.UploadMissing(key, domain, i, len(chunks), chunk)
 			if err != nil {
 				log.Fatalf("🛑 Failed to upload: %v", err)
 			}

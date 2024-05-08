@@ -191,7 +191,7 @@ func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadR
 	return &r, nil
 }
 
-func (c *Client) UploadMissing(key string, domain string, parts [][]byte) (*MissingUploadResponse, error) {
+func (c *Client) UploadMissing(key string, domain string, i, count int, parts [][]byte) (*MissingUploadResponse, error) {
 	var b bytes.Buffer
 	bf := bufio.NewWriter(&b)
 	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
@@ -215,9 +215,9 @@ func (c *Client) UploadMissing(key string, domain string, parts [][]byte) (*Miss
 		return nil, err
 	}
 	if len(parts) == 1 {
-		log.Printf("🏃 Uploading 1 missing part (%d bytes compressed)…", b.Len())
+		log.Printf("🏃 Uploading chunk %d/%d of 1 missing part (%d bytes compressed)…", i+1, count, b.Len())
 	} else {
-		log.Printf("🏃 Uploading %d missing parts (%d bytes compressed)…", len(parts), b.Len())
+		log.Printf("🏃 Uploading chunk %d/%d of %d missing parts (%d bytes compressed)…", i+1, count, len(parts), b.Len())
 	}
 	resp, err := c.client.Post(c.Url+missingUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes(), "🧘 Upload complete, waiting for server…"))
 	if err != nil {
