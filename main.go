@@ -90,15 +90,15 @@ func main() {
 		if len(os.Args) > 2 {
 			key = os.Args[2]
 		} else {
-			fmt.Println("🔑 Enter your key (no echo):")
+			fmt.Println("API keys are provisioned for users or teams after logging into https://xmit.co/admin\nUser keys are best on your personal machines, team keys for CI/CD systems.\n🔑 Enter your API key (no echo):")
 			keyBytes, err := term.ReadPassword(int(syscall.Stdin))
 			if err != nil {
-				log.Fatalf("🛑 Failed to read key: %v", err)
+				log.Fatalf("🛑 Failed to read API key: %v", err)
 			}
 			key = string(keyBytes)
 		}
 		if err := storeKey(key); err != nil {
-			log.Fatalf("🛑 Failed to store key: %v", err)
+			log.Fatalf("🛑 Failed to store API key: %v", err)
 		}
 		os.Exit(0)
 	}
