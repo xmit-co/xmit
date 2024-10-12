@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"github.com/kirsle/configdir"
+	"github.com/xmit-co/xmit/preview"
 	"github.com/xmit-co/xmit/protocol"
 	"github.com/zeebo/blake3"
 	"golang.org/x/term"
@@ -43,7 +44,10 @@ func storeKey(key string) error {
 }
 
 func usage() {
-	fmt.Println("Usage:\nxmit set-key [key] (or set XMIT_KEY)\nxmit domain [directory]")
+	fmt.Println("Usage:")
+	fmt.Println("  xmit set-key [key] (or set XMIT_KEY) → configure your API key")
+	fmt.Println("  xmit preview [directory] → serve a preview of your site")
+	fmt.Println("  xmit domain [directory] → upload to domain")
 }
 
 func chunkSlice(data [][]byte, maxSize int) [][][]byte {
@@ -114,6 +118,13 @@ func main() {
 	directory, err := filepath.Abs(directory)
 	if err != nil {
 		log.Fatalf("🛑 Failed to get absolute path: %v", err)
+	}
+
+	if domain == "preview" {
+		if err := preview.Serve(directory); err != nil {
+			log.Fatalf("🛑 Failed to preview: %v", err)
+		}
+		return
 	}
 
 	client := protocol.NewClient()
