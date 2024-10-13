@@ -39,6 +39,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !os.IsNotExist(err) {
 		log.Printf("⚠️ %s: %v", cfgPath, err)
 	}
+	w.Header().Add("Server", "xmit")
+	w.Header().Add("X-Frame-Options", "SAMEORIGIN")
+	w.Header().Add("X-Content-Type-Options", "nosniff")
+	w.Header().Add("Referrer-Policy", "no-referrer")
+	w.Header().Add("Accept-Ranges", "bytes")
 	for _, header := range cfg.Headers {
 		apply := false
 		if header.On == nil {
