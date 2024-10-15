@@ -258,6 +258,13 @@ func download(key, domain, id, destination string) error {
 func downloadTraversal(client *protocol.Client, key, domain string, node *protocol.Node, destination string) error {
 	if node.Hash != nil {
 		hash := *node.Hash
+		if b, err := os.ReadFile(destination); err == nil {
+			h2 := protocol.Hash(blake3.Sum256(b))
+			if bytes.Equal(h2[:], hash[:]) {
+				return nil
+			}
+		}
+		log.Printf("🎁 Downloading %s", destination)
 		resp, err := client.DownloadParts(key, domain, []protocol.Hash{hash})
 		if err != nil {
 			return fmt.Errorf("downloading part: %w", err)
@@ -271,6 +278,7 @@ func downloadTraversal(client *protocol.Client, key, domain string, node *protoc
 		if err := os.WriteFile(destination, resp.Parts[0], 0644); err != nil {
 			return fmt.Errorf("writing file: %w", err)
 		}
+		log.Printf("🎁 Downloaded %s", destination)
 	} else {
 		if err := os.MkdirAll(destination, 0755); err != nil {
 			return err
