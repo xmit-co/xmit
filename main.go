@@ -1,20 +1,24 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
-	"github.com/kirsle/configdir"
-	"github.com/xmit-co/xmit/preview"
-	"github.com/xmit-co/xmit/protocol"
-	"github.com/zeebo/blake3"
-	"golang.org/x/term"
 	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
+
+	"github.com/fxamacker/cbor/v2"
+	"github.com/kirsle/configdir"
+	"github.com/xmit-co/xmit/preview"
+	"github.com/xmit-co/xmit/protocol"
+	"github.com/zeebo/blake3"
+	"golang.org/x/term"
 )
 
 type ingestion struct {
@@ -45,9 +49,10 @@ func storeKey(key string) error {
 
 func usage() {
 	fmt.Println("Usage:")
-	fmt.Println("  xmit set-key [key] (or set XMIT_KEY) → configure your API key")
-	fmt.Println("  xmit preview [directory] → serve a preview of your site")
-	fmt.Println("  xmit domain [directory] → upload to domain")
+	fmt.Println("  xmit set-key [KEY] (or set XMIT_KEY) → configure your API key")
+	fmt.Println("  xmit DOMAIN [DIRECTORY] → upload to DOMAIN")
+	fmt.Println("  xmit preview [DIRECTORY] → serve a preview locally (set LISTEN to override :4000)")
+	fmt.Println("  xmit download DOMAIN[@ID] DIRECTORY → download from DOMAIN to DIRECTORY (specify an upload ID or omit ID for latest)")
 }
 
 func chunkSlice(data [][]byte, maxSize int) [][][]byte {
@@ -107,6 +112,31 @@ func main() {
 		os.Exit(0)
 	}
 
+	client := protocol.NewClient()
+
+	key := findKey()
+	if key == "" {
+		log.Fatalf("🛑 No key found. Set XMIT_KEY or run 'xmit set-key'.")
+	}
+
+	if domain == "download" {
+		if len(os.Args) < 4 {
+			log.Fatalf("🛑 Missing domain[@id] destination arguments")
+		}
+		domainAndID := os.Args[2]
+		parts := strings.SplitN(domainAndID, "@", 2)
+		domain = parts[0]
+		id := ""
+		if len(parts) == 2 {
+			id = parts[1]
+		}
+		destination := os.Args[3]
+		if err := download(key, domain, id, destination); err != nil {
+			log.Fatalf("🛑 Failed to download: %v", err)
+		}
+		return
+	}
+
 	var directory string
 	if len(os.Args) > 2 {
 		directory = os.Args[2]
@@ -125,13 +155,6 @@ func main() {
 			log.Fatalf("🛑 Failed to preview: %v", err)
 		}
 		return
-	}
-
-	client := protocol.NewClient()
-
-	key := findKey()
-	if key == "" {
-		log.Fatalf("🛑 No key found. Set XMIT_KEY or run 'xmit set-key'.")
 	}
 
 	log.Printf("📦 Bundling %s…", directory)
@@ -214,6 +237,67 @@ func main() {
 	if !finalizeResp.Response.Success {
 		log.Fatalf("🛑 Finalization failed")
 	}
+}
+
+func download(key, domain, id, destination string) error {
+	client := protocol.NewClient()
+	resp, err := client.DownloadBundle(key, domain, id)
+	if err != nil {
+		return fmt.Errorf("downloading bundle: %w", err)
+	}
+	if !resp.Response.Success {
+		return fmt.Errorf("downloading bundle, server-side: %v", resp.Response.Errors)
+	}
+	var node protocol.Node
+	if err := cbor.NewDecoder(bytes.NewReader(resp.Bundle)).Decode(&node); err != nil {
+		return fmt.Errorf("unmarshaling bundle: %w", err)
+	}
+	return downloadTraversal(client, key, domain, &node, destination)
+}
+
+func downloadTraversal(client *protocol.Client, key, domain string, node *protocol.Node, destination string) error {
+	if node.Hash != nil {
+		hash := *node.Hash
+		resp, err := client.DownloadParts(key, domain, []protocol.Hash{hash})
+		if err != nil {
+			return fmt.Errorf("downloading part: %w", err)
+		}
+		if !resp.Response.Success {
+			return fmt.Errorf("downloading part, server-side: %v", resp.Response.Errors)
+		}
+		if len(resp.Parts) == 0 {
+			return fmt.Errorf("no part found for %s", hash)
+		}
+		if err := os.WriteFile(destination, resp.Parts[0], 0644); err != nil {
+			return fmt.Errorf("writing file: %w", err)
+		}
+	} else {
+		if err := os.MkdirAll(destination, 0755); err != nil {
+			return err
+		}
+		var errors []error
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for name, child := range node.Children {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := downloadTraversal(client, key, domain, child, filepath.Join(destination, name)); err != nil {
+					mu.Lock()
+					errors = append(errors, err)
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		if len(errors) > 0 {
+			for _, err := range errors {
+				log.Printf("🛑 Failed to download: %v", err)
+			}
+			return fmt.Errorf("%d subtraversals failed", len(errors))
+		}
+	}
+	return nil
 }
 
 func printMessages(resp protocol.Response) {
