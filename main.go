@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -240,6 +241,16 @@ func main() {
 }
 
 func download(key, domain, id, destination string) error {
+	concurrency := 8
+	concurrencyStr := os.Getenv("DOWNLOAD_CONCURRENCY")
+	var err error
+	if concurrencyStr != "" {
+		concurrency, err = strconv.Atoi(concurrencyStr)
+		if err != nil {
+			return fmt.Errorf("invalid DOWNLOAD_CONCURRENCY: %w", err)
+		}
+	}
+
 	client := protocol.NewClient()
 	resp, err := client.DownloadBundle(key, domain, id)
 	if err != nil {
@@ -252,10 +263,11 @@ func download(key, domain, id, destination string) error {
 	if err := cbor.NewDecoder(bytes.NewReader(resp.Bundle)).Decode(&node); err != nil {
 		return fmt.Errorf("unmarshaling bundle: %w", err)
 	}
-	return downloadTraversal(client, key, domain, &node, destination)
+	semaphore := make(chan struct{}, concurrency)
+	return downloadTraversal(client, key, domain, &node, destination, semaphore)
 }
 
-func downloadTraversal(client *protocol.Client, key, domain string, node *protocol.Node, destination string) error {
+func downloadTraversal(client *protocol.Client, key, domain string, node *protocol.Node, destination string, semaphore chan struct{}) error {
 	if node.Hash != nil {
 		hash := *node.Hash
 		if b, err := os.ReadFile(destination); err == nil {
@@ -264,6 +276,8 @@ func downloadTraversal(client *protocol.Client, key, domain string, node *protoc
 				return nil
 			}
 		}
+		semaphore <- struct{}{}
+		defer func() { <-semaphore }()
 		log.Printf("🎁 Downloading %s", destination)
 		resp, err := client.DownloadParts(key, domain, []protocol.Hash{hash})
 		if err != nil {
@@ -290,7 +304,7 @@ func downloadTraversal(client *protocol.Client, key, domain string, node *protoc
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if err := downloadTraversal(client, key, domain, child, filepath.Join(destination, name)); err != nil {
+				if err := downloadTraversal(client, key, domain, child, filepath.Join(destination, name), semaphore); err != nil {
 					mu.Lock()
 					errors = append(errors, err)
 					mu.Unlock()
