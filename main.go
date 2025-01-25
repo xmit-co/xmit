@@ -35,10 +35,26 @@ func findKey() string {
 	if key, found := os.LookupEnv("XMIT_KEY"); found {
 		return key
 	}
-	if bytes, err := os.ReadFile(keyPath); err == nil {
-		return strings.TrimSpace(string(bytes))
+	if b, err := os.ReadFile(keyPath); err == nil {
+		return strings.TrimSpace(string(b))
 	}
 	return ""
+}
+
+func findDirectory() string {
+	var directory string
+	if len(os.Args) > 2 {
+		directory = os.Args[2]
+	} else if _, err := os.Stat("dist"); !os.IsNotExist(err) {
+		directory = "dist"
+	} else {
+		directory = "."
+	}
+	directory, err := filepath.Abs(directory)
+	if err != nil {
+		log.Fatalf("🛑 Failed to get absolute path: %v", err)
+	}
+	return directory
 }
 
 func storeKey(key string) error {
@@ -113,12 +129,19 @@ func main() {
 		os.Exit(0)
 	}
 
-	client := protocol.NewClient()
+	if domain == "preview" {
+		if err := preview.Serve(findDirectory()); err != nil {
+			log.Fatalf("🛑 Failed to preview: %v", err)
+		}
+		return
+	}
 
 	key := findKey()
 	if key == "" {
 		log.Fatalf("🛑 No key found. Set XMIT_KEY or run 'xmit set-key'.")
 	}
+
+	client := protocol.NewClient()
 
 	if domain == "download" {
 		if len(os.Args) < 4 {
@@ -138,25 +161,7 @@ func main() {
 		return
 	}
 
-	var directory string
-	if len(os.Args) > 2 {
-		directory = os.Args[2]
-	} else if _, err := os.Stat("dist"); !os.IsNotExist(err) {
-		directory = "dist"
-	} else {
-		directory = "."
-	}
-	directory, err := filepath.Abs(directory)
-	if err != nil {
-		log.Fatalf("🛑 Failed to get absolute path: %v", err)
-	}
-
-	if domain == "preview" {
-		if err := preview.Serve(directory); err != nil {
-			log.Fatalf("🛑 Failed to preview: %v", err)
-		}
-		return
-	}
+	directory := findDirectory()
 
 	log.Printf("📦 Bundling %s…", directory)
 	b, err := ingest(directory)

@@ -1,6 +1,6 @@
 module github.com/xmit-co/xmit
 
-go 1.22
+go 1.23
 
 require (
 	github.com/fxamacker/cbor/v2 v2.7.0
@@ -9,11 +9,11 @@ require (
 	github.com/klauspost/compress v1.17.11
 	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/zeebo/blake3 v0.2.4
-	golang.org/x/term v0.25.0
+	golang.org/x/term v0.28.0
 )
 
 require (
-	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/sys v0.26.0 // indirect
+	golang.org/x/sys v0.29.0 // indirect
 )
