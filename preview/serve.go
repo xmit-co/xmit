@@ -2,11 +2,9 @@ package preview
 
 import (
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/pelletier/go-toml/v2"
-	"github.com/xmit-co/xmit/config"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/mail"
 	"os"
@@ -14,6 +12,10 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/pelletier/go-toml/v2"
+	"github.com/xmit-co/xmit/config"
 )
 
 type handler struct {
@@ -143,7 +145,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendFormByMail(r *http.Request, to string) error {
-	if r.Header.Get("Content-Type") == "multipart/form-data" {
+	mediaTypeHeader := r.Header.Get("Content-Type")
+	mediaType, _, _ := mime.ParseMediaType(mediaTypeHeader)
+	if mediaType == "multipart/form-data" {
 		if err := r.ParseMultipartForm(64 << 20); err != nil {
 			return err
 		}
