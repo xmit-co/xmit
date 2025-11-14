@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -22,6 +23,7 @@ const (
 	finalizeUploadEndpoint = endpointPrefix + "/finalize"
 	bundleDownloadEndpoint = endpointPrefix + "/dl/bundle"
 	partsDownloadEndpoint  = endpointPrefix + "/dl/parts"
+	listTeamsEndpoint      = endpointPrefix + "/teams"
 )
 
 type Client struct {
@@ -47,7 +49,9 @@ func NewClient() *Client {
 }
 
 type Request struct {
-	Key string `cbor:"1,keyasint"`
+	Key    string `cbor:"1,keyasint"`
+	Team   string `cbor:"2,keyasint,omitempty"`
+	Domain string `cbor:"5,keyasint,omitempty"`
 }
 
 type Response struct {
@@ -59,8 +63,7 @@ type Response struct {
 
 type BundleSuggestRequest struct {
 	Request
-	Domain string `cbor:"5,keyasint,omitempty"`
-	ID     Hash   `cbor:"6,keyasint,omitempty"`
+	ID Hash `cbor:"6,keyasint,omitempty"`
 }
 
 type BundleSuggestResponse struct {
@@ -71,7 +74,6 @@ type BundleSuggestResponse struct {
 
 type BundleUploadRequest struct {
 	Request
-	Domain string `cbor:"5,keyasint,omitempty"`
 	Bundle []byte `cbor:"6,keyasint,omitempty"`
 }
 
@@ -83,9 +85,8 @@ type BundleUploadResponse struct {
 
 type MissingUploadRequest struct {
 	Request
-	Domain string   `cbor:"5,keyasint,omitempty"`
-	ID     Hash     `cbor:"6,keyasint,omitempty"`
-	Parts  [][]byte `cbor:"7,keyasint,omitempty"`
+	ID    Hash     `cbor:"6,keyasint,omitempty"`
+	Parts [][]byte `cbor:"7,keyasint,omitempty"`
 }
 
 type MissingUploadResponse struct {
@@ -94,8 +95,7 @@ type MissingUploadResponse struct {
 
 type FinalizeUploadRequest struct {
 	Request
-	Domain string `cbor:"5,keyasint,omitempty"`
-	ID     Hash   `cbor:"6,keyasint,omitempty"`
+	ID Hash `cbor:"6,keyasint,omitempty"`
 }
 
 type FinalizeUploadResponse struct {
@@ -104,8 +104,7 @@ type FinalizeUploadResponse struct {
 
 type BundleDownloadRequest struct {
 	Request
-	Domain string `cbor:"5,keyasint,omitempty"`
-	ID     string `cbor:"6,keyasint,omitempty"`
+	ID string `cbor:"6,keyasint,omitempty"`
 }
 
 type BundleDownloadResponse struct {
@@ -115,7 +114,6 @@ type BundleDownloadResponse struct {
 
 type PartsDownloadRequest struct {
 	Request
-	Domain string `cbor:"5,keyasint,omitempty"`
 	Hashes []Hash `cbor:"6,keyasint,omitempty"`
 }
 
@@ -124,279 +122,254 @@ type PartsDownloadResponse struct {
 	Parts [][]byte `cbor:"5,keyasint,omitempty"`
 }
 
-func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestResponse, error) {
+type ListTeamsRequest struct {
+	Request
+}
+
+type Team struct {
+	ID   string `cbor:"1,keyasint,omitempty"`
+	Name string `cbor:"2,keyasint,omitempty"`
+}
+
+type ListTeamsResponse struct {
+	Response
+	Teams         []Team `cbor:"5,keyasint,omitempty"`
+	ManagementURL string `cbor:"6,keyasint,omitempty"`
+}
+
+// encodeRequest encodes a request to CBOR and compresses it with zstd
+func (c *Client) encodeRequest(req interface{}) ([]byte, error) {
 	var b bytes.Buffer
 	bf := bufio.NewWriter(&b)
 	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create zstd writer: %w", err)
 	}
+
 	e := c.EncMode.NewEncoder(z)
-	if err = e.Encode(&BundleSuggestRequest{
-		Request: Request{
-			Key: key,
-		},
-		Domain: domain,
-		ID:     id,
-	}); err != nil {
-		return nil, err
+	if err = e.Encode(req); err != nil {
+		z.Close()
+		return nil, fmt.Errorf("failed to encode request: %w", err)
 	}
+
 	if err = z.Close(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to close zstd writer: %w", err)
 	}
+
 	if err = bf.Flush(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to flush buffer: %w", err)
 	}
-	log.Print("🤔 Suggesting bundle…")
-	resp, err := c.client.Post(c.Url+bundleSuggestEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
+
+	return b.Bytes(), nil
+}
+
+// decodeResponse decodes a CBOR+zstd response
+func (c *Client) decodeResponse(body io.ReadCloser, resp interface{}) error {
+	defer body.Close()
+
+	zd, err := zstd.NewReader(body)
 	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("expected 200, got %d", resp.StatusCode)
-	}
-	var r BundleSuggestResponse
-	zd, err := zstd.NewReader(resp.Body)
-	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to create zstd reader: %w", err)
 	}
 	defer zd.Close()
-	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
+
+	if err = cbor.NewDecoder(zd).Decode(resp); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return nil
+}
+
+// post sends a POST request to the specified endpoint with the given payload
+func (c *Client) post(endpoint string, payload []byte, useProgress bool, progressMsg string) (*http.Response, error) {
+	var reader io.Reader
+	if useProgress {
+		reader = progress.NewReader(payload, progressMsg)
+	} else {
+		reader = bytes.NewReader(payload)
+	}
+
+	resp, err := c.client.Post(c.Url+endpoint, "application/cbor+zstd", reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to post to %s: %w", endpoint, err)
+	}
+
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, endpoint)
+	}
+
+	return resp, nil
+}
+
+func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestResponse, error) {
+	payload, err := c.encodeRequest(&BundleSuggestRequest{
+		Request: Request{
+			Key:    key,
+			Domain: domain,
+		},
+		ID: id,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	log.Print("🤔 Suggesting bundle…")
+	resp, err := c.post(bundleSuggestEndpoint, payload, false, "")
+	if err != nil {
+		return nil, err
+	}
+
+	var r BundleSuggestResponse
+	if err = c.decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
 func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadResponse, error) {
-	var b bytes.Buffer
-	bf := bufio.NewWriter(&b)
-	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
-	if err != nil {
-		return nil, err
-	}
-	e := c.EncMode.NewEncoder(z)
-	if err = e.Encode(&BundleUploadRequest{
+	payload, err := c.encodeRequest(&BundleUploadRequest{
 		Request: Request{
-			Key: key,
+			Key:    key,
+			Domain: domain,
 		},
-		Domain: domain,
 		Bundle: bundle,
-	}); err != nil {
-		return nil, err
-	}
-	if err = z.Close(); err != nil {
-		return nil, err
-	}
-	if err = bf.Flush(); err != nil {
-		return nil, err
-	}
-	log.Printf("🚶 Uploading bundle (%d bytes)…", b.Len())
-	resp, err := c.client.Post(c.Url+bundleUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes(), "🧘 Bundle upload complete, waiting for server…"))
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("expected 200, got %d", resp.StatusCode)
+
+	log.Printf("🚶 Uploading bundle (%d bytes)…", len(payload))
+	resp, err := c.post(bundleUploadEndpoint, payload, true, "🧘 Bundle upload complete, waiting for server…")
+	if err != nil {
+		return nil, err
 	}
+
 	var r BundleUploadResponse
-	zd, err := zstd.NewReader(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer zd.Close()
-	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
+	if err = c.decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
 func (c *Client) UploadMissing(key string, domain string, i, count int, parts [][]byte) (*MissingUploadResponse, error) {
-	var b bytes.Buffer
-	bf := bufio.NewWriter(&b)
-	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
-	if err != nil {
-		return nil, err
-	}
-	e := c.EncMode.NewEncoder(z)
-	if err = e.Encode(&MissingUploadRequest{
+	payload, err := c.encodeRequest(&MissingUploadRequest{
 		Request: Request{
-			Key: key,
+			Key:    key,
+			Domain: domain,
 		},
-		Domain: domain,
-		Parts:  parts,
-	}); err != nil {
+		Parts: parts,
+	})
+	if err != nil {
 		return nil, err
 	}
-	if err = z.Close(); err != nil {
-		return nil, err
-	}
-	if err = bf.Flush(); err != nil {
-		return nil, err
-	}
+
 	if len(parts) == 1 {
-		log.Printf("🏃 Uploading chunk %d/%d of 1 missing part (%d bytes compressed)…", i+1, count, b.Len())
+		log.Printf("🏃 Uploading chunk %d/%d of 1 missing part (%d bytes compressed)…", i+1, count, len(payload))
 	} else {
-		log.Printf("🏃 Uploading chunk %d/%d of %d missing parts (%d bytes compressed)…", i+1, count, len(parts), b.Len())
+		log.Printf("🏃 Uploading chunk %d/%d of %d missing parts (%d bytes compressed)…", i+1, count, len(parts), len(payload))
 	}
-	resp, err := c.client.Post(c.Url+missingUploadEndpoint, "application/cbor+zstd", progress.NewReader(b.Bytes(), "🧘 Upload complete, waiting for server…"))
+
+	resp, err := c.post(missingUploadEndpoint, payload, true, "🧘 Upload complete, waiting for server…")
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("expected 200, got %d", resp.StatusCode)
-	}
+
 	var r MissingUploadResponse
-	zd, err := zstd.NewReader(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer zd.Close()
-	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
+	if err = c.decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
 func (c *Client) Finalize(key string, domain string, id Hash) (*FinalizeUploadResponse, error) {
-	var b bytes.Buffer
-	bf := bufio.NewWriter(&b)
-	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
-	if err != nil {
-		return nil, err
-	}
-	e := c.EncMode.NewEncoder(z)
-	if err = e.Encode(&FinalizeUploadRequest{
+	payload, err := c.encodeRequest(&FinalizeUploadRequest{
 		Request: Request{
-			Key: key,
+			Key:    key,
+			Domain: domain,
 		},
-		Domain: domain,
-		ID:     id,
-	}); err != nil {
+		ID: id,
+	})
+	if err != nil {
 		return nil, err
 	}
-	if err = z.Close(); err != nil {
-		return nil, err
-	}
-	if err = bf.Flush(); err != nil {
-		return nil, err
-	}
+
 	log.Print("🏁 Finalizing…")
-	resp, err := c.client.Post(c.Url+finalizeUploadEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
+	resp, err := c.post(finalizeUploadEndpoint, payload, false, "")
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("expected 200, got %d", resp.StatusCode)
-	}
+
 	var r FinalizeUploadResponse
-	zd, err := zstd.NewReader(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer zd.Close()
-	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
+	if err = c.decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
 func (c *Client) DownloadBundle(key, domain, id string) (*BundleDownloadResponse, error) {
-	var b bytes.Buffer
-	bf := bufio.NewWriter(&b)
-	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
-	if err != nil {
-		return nil, err
-	}
-	e := c.EncMode.NewEncoder(z)
-	if err = e.Encode(&BundleDownloadRequest{
+	payload, err := c.encodeRequest(&BundleDownloadRequest{
 		Request: Request{
-			Key: key,
+			Key:    key,
+			Domain: domain,
 		},
-		Domain: domain,
-		ID:     id,
-	}); err != nil {
-		return nil, err
-	}
-	if err = z.Close(); err != nil {
-		return nil, err
-	}
-	if err = bf.Flush(); err != nil {
-		return nil, err
-	}
-	resp, err := c.client.Post(c.Url+bundleDownloadEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
+		ID: id,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("expected 200, got %d", resp.StatusCode)
+
+	resp, err := c.post(bundleDownloadEndpoint, payload, false, "")
+	if err != nil {
+		return nil, err
 	}
+
 	var r BundleDownloadResponse
-	zd, err := zstd.NewReader(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer zd.Close()
-	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
+	if err = c.decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
 func (c *Client) DownloadParts(key, domain string, hashes []Hash) (*PartsDownloadResponse, error) {
-	var b bytes.Buffer
-	bf := bufio.NewWriter(&b)
-	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
-	if err != nil {
-		return nil, err
-	}
-	e := c.EncMode.NewEncoder(z)
-	if err = e.Encode(&PartsDownloadRequest{
+	payload, err := c.encodeRequest(&PartsDownloadRequest{
 		Request: Request{
-			Key: key,
+			Key:    key,
+			Domain: domain,
 		},
-		Domain: domain,
 		Hashes: hashes,
-	}); err != nil {
-		return nil, err
-	}
-	if err = z.Close(); err != nil {
-		return nil, err
-	}
-	if err = bf.Flush(); err != nil {
-		return nil, err
-	}
-	resp, err := c.client.Post(c.Url+partsDownloadEndpoint, "application/cbor+zstd", bytes.NewReader(b.Bytes()))
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("expected 200, got %d", resp.StatusCode)
+
+	resp, err := c.post(partsDownloadEndpoint, payload, false, "")
+	if err != nil {
+		return nil, err
 	}
+
 	var r PartsDownloadResponse
-	zd, err := zstd.NewReader(resp.Body)
+	if err = c.decodeResponse(resp.Body, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (c *Client) ListTeams(key string) (*ListTeamsResponse, error) {
+	payload, err := c.encodeRequest(&Request{
+		Key: key,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer zd.Close()
-	if err = cbor.NewDecoder(zd).Decode(&r); err != nil {
+
+	resp, err := c.post(listTeamsEndpoint, payload, false, "")
+	if err != nil {
+		return nil, err
+	}
+
+	var r ListTeamsResponse
+	if err = c.decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
