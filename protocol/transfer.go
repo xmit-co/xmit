@@ -15,8 +15,7 @@ import (
 )
 
 const (
-	version                = "0"
-	endpointPrefix         = "/api/cli/" + version
+	endpointPrefix         = "/api/0"
 	bundleSuggestEndpoint  = endpointPrefix + "/suggest"
 	bundleUploadEndpoint   = endpointPrefix + "/bundle"
 	missingUploadEndpoint  = endpointPrefix + "/missing"
