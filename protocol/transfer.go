@@ -132,8 +132,20 @@ type Team struct {
 
 type ListTeamsResponse struct {
 	Response
-	Teams        []Team  `cbor:"5,keyasint,omitempty"`
+	Teams         []Team `cbor:"5,keyasint,omitempty"`
 	ManagementURL string `cbor:"6,keyasint,omitempty"`
+}
+
+type RequestKeyRequest struct {
+	Name string `cbor:"1,keyasint,omitempty"`
+}
+
+type RequestKeyResponse struct {
+	Response
+	BrowserURL string `cbor:"5,keyasint,omitempty"`
+	PollURL    string `cbor:"6,keyasint,omitempty"`
+	Secret     string `cbor:"7,keyasint,omitempty"`
+	RequestID  string `cbor:"8,keyasint,omitempty"`
 }
 
 // encodeRequest encodes a request to CBOR and compresses it with zstd
