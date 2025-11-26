@@ -15,8 +15,9 @@
           };
           packages.default = pkgs.buildGoModule {
             pname = "xmit";
-            version = "0.3.5";            src = ./.;
-            vendorHash = "sha256-+X5e8GFobcbsJnm7h6fYo1A9Ukqkfd3wmQ6yETvDe+k=";
+            version = "0.4.0";  
+            src = ./.;
+            vendorHash = "sha256-beSUbtBgJHlXmgv+cLSOaGP4evXdxN0sOpasw+v8xgs=";
           };
         }
     );
