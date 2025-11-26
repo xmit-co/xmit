@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pelletier/go-toml/v2"
+	"github.com/titanous/json5"
 	"github.com/xmit-co/xmit/config"
 )
 
@@ -32,14 +33,25 @@ func openFile(path string) *os.File {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	cfg := config.XmitTOML{}
-	cfgPath := filepath.Join(h.directory, "xmit.toml")
-	cfgBytes, err := os.ReadFile(cfgPath)
+	cfg := config.XmitConfig{}
+	jsonPath := filepath.Join(h.directory, "xmit.json")
+	tomlPath := filepath.Join(h.directory, "xmit.toml")
+	cfgBytes, err := os.ReadFile(jsonPath)
 	if err == nil {
-		err = toml.Unmarshal(cfgBytes, &cfg)
-	}
-	if err != nil && !os.IsNotExist(err) {
-		log.Printf("⚠️ %s: %v", cfgPath, err)
+		err = json5.Unmarshal(cfgBytes, &cfg)
+		if err != nil {
+			log.Printf("⚠️ %s: %v", jsonPath, err)
+		}
+	} else if os.IsNotExist(err) {
+		cfgBytes, err = os.ReadFile(tomlPath)
+		if err == nil {
+			err = toml.Unmarshal(cfgBytes, &cfg)
+		}
+		if err != nil && !os.IsNotExist(err) {
+			log.Printf("⚠️ %s: %v", tomlPath, err)
+		}
+	} else {
+		log.Printf("⚠️ %s: %v", jsonPath, err)
 	}
 	w.Header().Add("Server", "xmit")
 	w.Header().Add("X-Frame-Options", "SAMEORIGIN")
