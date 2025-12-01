@@ -229,7 +229,7 @@ func sendFormByMail(r *http.Request, to string) error {
 			}
 		}
 	}
-	log.Printf(body.String())
+	log.Print(body.String())
 	return nil
 }
 

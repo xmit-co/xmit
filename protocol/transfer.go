@@ -3,15 +3,21 @@ package protocol
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/klauspost/compress/zstd"
-	"github.com/xmit-co/xmit/progress"
 )
 
 const (
@@ -25,26 +31,48 @@ const (
 	listTeamsEndpoint      = endpointPrefix + "/teams"
 )
 
-type Client struct {
-	Url     string
-	client  *http.Client
-	EncMode cbor.EncMode
+// DiscoveryInfo holds the response from /.well-known/web-publication-protocol
+type DiscoveryInfo struct {
+	Protocols           []string `json:"protocols"`
+	URL                 string   `json:"url"`
+	APIKeyManagementURL string   `json:"apiKeyManagementUrl"`
 }
 
-func NewClient() *Client {
-	url := os.Getenv("XMIT_URL")
-	if url == "" {
-		url = "https://xmit.co"
+// Discover fetches the xmit discovery info from XMIT_URL (default: https://xmit.co)
+func Discover() (*DiscoveryInfo, error) {
+	baseURL := os.Getenv("XMIT_URL")
+	if baseURL == "" {
+		baseURL = "https://xmit.co"
 	}
-	encMode, err := cbor.CanonicalEncOptions().EncMode()
+	discoveryURL := baseURL + "/.well-known/web-publication-protocol"
+	resp, err := http.Get(discoveryURL)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to fetch discovery info from %s: %w", discoveryURL, err)
 	}
-	return &Client{
-		Url:     url,
-		client:  &http.Client{},
-		EncMode: encMode,
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("discovery endpoint returned status %d", resp.StatusCode)
 	}
+
+	var info DiscoveryInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("failed to decode discovery info: %w", err)
+	}
+
+	// Validate that xmit/0 protocol is supported
+	supported := false
+	for _, p := range info.Protocols {
+		if p == "xmit/0" {
+			supported = true
+			break
+		}
+	}
+	if !supported {
+		return nil, fmt.Errorf("domain does not support xmit/0 protocol")
+	}
+
+	return &info, nil
 }
 
 type Request struct {
@@ -148,8 +176,63 @@ type RequestKeyResponse struct {
 	RequestID  string `cbor:"8,keyasint,omitempty"`
 }
 
+// resolveClients resolves a URL to multiple IPs and creates an HTTP client for each
+func resolveClients(baseURL string) ([]*http.Client, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup IPs for %s: %w", host, err)
+	}
+
+	// Filter to IPv4 addresses only for simplicity
+	var ipv4s []net.IP
+	for _, ip := range ips {
+		if ip4 := ip.To4(); ip4 != nil {
+			ipv4s = append(ipv4s, ip4)
+		}
+	}
+	if len(ipv4s) == 0 {
+		ipv4s = ips
+	}
+
+	log.Printf("🌐 Resolved %s to %d IPs", host, len(ipv4s))
+
+	clients := make([]*http.Client, len(ipv4s))
+	for i, ip := range ipv4s {
+		targetIP := ip.String()
+		dialer := &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
+		transport := &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, net.JoinHostPort(targetIP, port))
+			},
+			MaxIdleConns:        10,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		}
+		clients[i] = &http.Client{Transport: transport}
+	}
+	return clients, nil
+}
+
 // encodeRequest encodes a request to CBOR and compresses it with zstd
-func (c *Client) encodeRequest(req interface{}) ([]byte, error) {
+func encodeRequest(encMode cbor.EncMode, req interface{}) ([]byte, error) {
 	var b bytes.Buffer
 	bf := bufio.NewWriter(&b)
 	z, err := zstd.NewWriter(bf, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
@@ -157,8 +240,7 @@ func (c *Client) encodeRequest(req interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create zstd writer: %w", err)
 	}
 
-	e := c.EncMode.NewEncoder(z)
-	if err = e.Encode(req); err != nil {
+	if err = encMode.NewEncoder(z).Encode(req); err != nil {
 		z.Close()
 		return nil, fmt.Errorf("failed to encode request: %w", err)
 	}
@@ -175,7 +257,7 @@ func (c *Client) encodeRequest(req interface{}) ([]byte, error) {
 }
 
 // decodeResponse decodes a CBOR+zstd response
-func (c *Client) decodeResponse(body io.ReadCloser, resp interface{}) error {
+func decodeResponse(body io.ReadCloser, resp interface{}) error {
 	defer body.Close()
 
 	zd, err := zstd.NewReader(body)
@@ -191,55 +273,159 @@ func (c *Client) decodeResponse(body io.ReadCloser, resp interface{}) error {
 	return nil
 }
 
-// post sends a POST request to the specified endpoint with the given payload
-func (c *Client) post(endpoint string, payload []byte, useProgress bool, progressMsg string) (*http.Response, error) {
-	var reader io.Reader
-	if useProgress {
-		reader = progress.NewReader(payload, progressMsg)
-	} else {
-		reader = bytes.NewReader(payload)
-	}
-
-	resp, err := c.client.Post(c.Url+endpoint, "application/cbor+zstd", reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to post to %s: %w", endpoint, err)
-	}
-
-	if resp.StatusCode != 200 {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, endpoint)
-	}
-
-	return resp, nil
+// ParallelUploader manages parallel chunk uploads across multiple IPs
+type ParallelUploader struct {
+	clients   []*http.Client
+	baseURL   string
+	encMode   cbor.EncMode
+	sendSem   chan struct{}
+	clientIdx atomic.Uint64
 }
 
-func (c *Client) SuggestBundle(key, domain string, id Hash) (*BundleSuggestResponse, error) {
-	payload, err := c.encodeRequest(&BundleSuggestRequest{
+// NewParallelUploader creates an uploader that spreads requests across IPs
+func NewParallelUploader(baseURL string, concurrency int) (*ParallelUploader, error) {
+	clients, err := resolveClients(baseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	encMode, err := cbor.CanonicalEncOptions().EncMode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cbor encoder: %w", err)
+	}
+
+	return &ParallelUploader{
+		clients: clients,
+		baseURL: baseURL,
+		encMode: encMode,
+		sendSem: make(chan struct{}, concurrency),
+	}, nil
+}
+
+// EncMode returns the CBOR encoding mode
+func (p *ParallelUploader) EncMode() cbor.EncMode {
+	return p.encMode
+}
+
+// ChunkUploadResult holds the result of a single chunk upload
+type ChunkUploadResult struct {
+	Index    int
+	Response *MissingUploadResponse
+	Err      error
+}
+
+// UploadChunksParallel uploads all chunks in parallel (max concurrency), starting in order
+func (p *ParallelUploader) UploadChunksParallel(key, domain string, chunks [][][]byte) []ChunkUploadResult {
+	results := make([]ChunkUploadResult, len(chunks))
+	var wg sync.WaitGroup
+
+	// Use a channel to ensure chunks start in order
+	starts := make([]chan struct{}, len(chunks))
+	for i := range starts {
+		starts[i] = make(chan struct{})
+	}
+
+	for i, chunk := range chunks {
+		wg.Add(1)
+		go func(idx int, parts [][]byte) {
+			defer wg.Done()
+			// Wait for our turn to start
+			<-starts[idx]
+			resp, err := p.uploadChunk(key, domain, idx, len(chunks), parts, starts)
+			results[idx] = ChunkUploadResult{
+				Index:    idx,
+				Response: resp,
+				Err:      err,
+			}
+		}(i, chunk)
+	}
+
+	// Signal first chunk to start
+	close(starts[0])
+
+	wg.Wait()
+	return results
+}
+
+func (p *ParallelUploader) uploadChunk(key, domain string, i, count int, parts [][]byte, starts []chan struct{}) (*MissingUploadResponse, error) {
+	// Encode the request
+	payload, err := encodeRequest(p.encMode, &MissingUploadRequest{
 		Request: Request{
 			Key:    key,
 			Domain: domain,
 		},
-		ID: id,
+		Parts: parts,
 	})
 	if err != nil {
+		// Signal next chunk to start even on error
+		if i+1 < len(starts) {
+			close(starts[i+1])
+		}
 		return nil, err
 	}
 
-	log.Print("🤔 Suggesting bundle…")
-	resp, err := c.post(bundleSuggestEndpoint, payload, false, "")
+	// Acquire semaphore for sending data
+	p.sendSem <- struct{}{}
+
+	// Signal next chunk to start (after we acquired semaphore)
+	if i+1 < len(starts) {
+		close(starts[i+1])
+	}
+
+	// Select client in round-robin fashion (after acquiring semaphore to spread load)
+	clientIdx := int(p.clientIdx.Add(1)-1) % len(p.clients)
+	client := p.clients[clientIdx]
+
+	if len(parts) == 1 {
+		log.Printf("🏃 Uploading chunk %d/%d of 1 missing part (%d bytes compressed) via IP #%d…", i+1, count, len(payload), clientIdx+1)
+	} else {
+		log.Printf("🏃 Uploading chunk %d/%d of %d missing parts (%d bytes compressed) via IP #%d…", i+1, count, len(parts), len(payload), clientIdx+1)
+	}
+
+	// Create semaphore reader that releases semaphore when body is fully sent
+	bodyReader := &semaphoreReader{
+		reader: bytes.NewReader(payload),
+		sem:    p.sendSem,
+	}
+
+	// Create the request
+	req, err := http.NewRequest("POST", p.baseURL+missingUploadEndpoint, bodyReader)
 	if err != nil {
+		bodyReader.ensureReleased()
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/cbor+zstd")
+	req.ContentLength = int64(len(payload))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(payload)), nil
+	}
+
+	resp, err := client.Do(req)
+	// Ensure semaphore is released if the reader didn't complete
+	bodyReader.ensureReleased()
+	if err != nil {
+		return nil, fmt.Errorf("failed to post to %s: %w", missingUploadEndpoint, err)
+	}
+
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, missingUploadEndpoint)
+	}
+
+	log.Printf("🧘 Chunk %d/%d upload complete, waiting for server…", i+1, count)
+
+	var r MissingUploadResponse
+	if err = decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 
-	var r BundleSuggestResponse
-	if err = c.decodeResponse(resp.Body, &r); err != nil {
-		return nil, err
-	}
+	log.Printf("✅ Chunk %d/%d done", i+1, count)
 	return &r, nil
 }
 
-func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadResponse, error) {
-	payload, err := c.encodeRequest(&BundleUploadRequest{
+// UploadBundle uploads the bundle using a round-robin client
+func (p *ParallelUploader) UploadBundle(key, domain string, bundle []byte) (*BundleUploadResponse, error) {
+	payload, err := encodeRequest(p.encMode, &BundleUploadRequest{
 		Request: Request{
 			Key:    key,
 			Domain: domain,
@@ -250,51 +436,40 @@ func (c *Client) UploadBundle(key, domain string, bundle []byte) (*BundleUploadR
 		return nil, err
 	}
 
-	log.Printf("🚶 Uploading bundle (%d bytes)…", len(payload))
-	resp, err := c.post(bundleUploadEndpoint, payload, true, "🧘 Bundle upload complete, waiting for server…")
+	// Select client in round-robin fashion
+	clientIdx := int(p.clientIdx.Add(1)-1) % len(p.clients)
+	client := p.clients[clientIdx]
+
+	log.Printf("🚶 Uploading bundle (%d bytes) via IP #%d…", len(payload), clientIdx+1)
+
+	req, err := http.NewRequest("POST", p.baseURL+bundleUploadEndpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/cbor+zstd")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to post to %s: %w", bundleUploadEndpoint, err)
+	}
+
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, bundleUploadEndpoint)
+	}
+
+	log.Print("🧘 Bundle upload complete, waiting for server…")
 
 	var r BundleUploadResponse
-	if err = c.decodeResponse(resp.Body, &r); err != nil {
+	if err = decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
-func (c *Client) UploadMissing(key string, domain string, i, count int, parts [][]byte) (*MissingUploadResponse, error) {
-	payload, err := c.encodeRequest(&MissingUploadRequest{
-		Request: Request{
-			Key:    key,
-			Domain: domain,
-		},
-		Parts: parts,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if len(parts) == 1 {
-		log.Printf("🏃 Uploading chunk %d/%d of 1 missing part (%d bytes compressed)…", i+1, count, len(payload))
-	} else {
-		log.Printf("🏃 Uploading chunk %d/%d of %d missing parts (%d bytes compressed)…", i+1, count, len(parts), len(payload))
-	}
-
-	resp, err := c.post(missingUploadEndpoint, payload, true, "🧘 Upload complete, waiting for server…")
-	if err != nil {
-		return nil, err
-	}
-
-	var r MissingUploadResponse
-	if err = c.decodeResponse(resp.Body, &r); err != nil {
-		return nil, err
-	}
-	return &r, nil
-}
-
-func (c *Client) Finalize(key string, domain string, id Hash) (*FinalizeUploadResponse, error) {
-	payload, err := c.encodeRequest(&FinalizeUploadRequest{
+// SuggestBundle suggests a bundle using a round-robin client
+func (p *ParallelUploader) SuggestBundle(key, domain string, id Hash) (*BundleSuggestResponse, error) {
+	payload, err := encodeRequest(p.encMode, &BundleSuggestRequest{
 		Request: Request{
 			Key:    key,
 			Domain: domain,
@@ -305,21 +480,130 @@ func (c *Client) Finalize(key string, domain string, id Hash) (*FinalizeUploadRe
 		return nil, err
 	}
 
-	log.Print("🏁 Finalizing…")
-	resp, err := c.post(finalizeUploadEndpoint, payload, false, "")
+	// Select client in round-robin fashion
+	clientIdx := int(p.clientIdx.Add(1)-1) % len(p.clients)
+	client := p.clients[clientIdx]
+
+	log.Print("🤔 Suggesting bundle…")
+
+	req, err := http.NewRequest("POST", p.baseURL+bundleSuggestEndpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/cbor+zstd")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to post to %s: %w", bundleSuggestEndpoint, err)
+	}
+
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, bundleSuggestEndpoint)
+	}
+
+	var r BundleSuggestResponse
+	if err = decodeResponse(resp.Body, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// Finalize finalizes the upload using a round-robin client
+func (p *ParallelUploader) Finalize(key, domain string, id Hash) (*FinalizeUploadResponse, error) {
+	payload, err := encodeRequest(p.encMode, &FinalizeUploadRequest{
+		Request: Request{
+			Key:    key,
+			Domain: domain,
+		},
+		ID: id,
+	})
 	if err != nil {
 		return nil, err
+	}
+
+	// Select client in round-robin fashion
+	clientIdx := int(p.clientIdx.Add(1)-1) % len(p.clients)
+	client := p.clients[clientIdx]
+
+	log.Print("🏁 Finalizing…")
+
+	req, err := http.NewRequest("POST", p.baseURL+finalizeUploadEndpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/cbor+zstd")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to post to %s: %w", finalizeUploadEndpoint, err)
+	}
+
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, finalizeUploadEndpoint)
 	}
 
 	var r FinalizeUploadResponse
-	if err = c.decodeResponse(resp.Body, &r); err != nil {
+	if err = decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
-func (c *Client) DownloadBundle(key, domain, id string) (*BundleDownloadResponse, error) {
-	payload, err := c.encodeRequest(&BundleDownloadRequest{
+// semaphoreReader wraps a reader and releases a semaphore when fully read
+type semaphoreReader struct {
+	reader   io.Reader
+	sem      chan struct{}
+	released atomic.Bool
+}
+
+func (r *semaphoreReader) Read(p []byte) (n int, err error) {
+	n, err = r.reader.Read(p)
+	if err == io.EOF {
+		r.ensureReleased()
+	}
+	return
+}
+
+func (r *semaphoreReader) ensureReleased() {
+	if r.released.CompareAndSwap(false, true) {
+		<-r.sem
+	}
+}
+
+// ParallelDownloader manages parallel downloads across multiple IPs
+type ParallelDownloader struct {
+	clients   []*http.Client
+	baseURL   string
+	encMode   cbor.EncMode
+	sem       chan struct{}  // semaphore for concurrent downloads
+	clientIdx atomic.Uint64  // round-robin index for client selection
+}
+
+// NewParallelDownloader creates a downloader that spreads requests across IPs
+func NewParallelDownloader(baseURL string, concurrency int) (*ParallelDownloader, error) {
+	clients, err := resolveClients(baseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	encMode, err := cbor.CanonicalEncOptions().EncMode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cbor encoder: %w", err)
+	}
+
+	return &ParallelDownloader{
+		clients: clients,
+		baseURL: baseURL,
+		encMode: encMode,
+		sem:     make(chan struct{}, concurrency),
+	}, nil
+}
+
+// DownloadBundle downloads a bundle using a round-robin client
+func (p *ParallelDownloader) DownloadBundle(key, domain, id string) (*BundleDownloadResponse, error) {
+	payload, err := encodeRequest(p.encMode, &BundleDownloadRequest{
 		Request: Request{
 			Key:    key,
 			Domain: domain,
@@ -330,20 +614,43 @@ func (c *Client) DownloadBundle(key, domain, id string) (*BundleDownloadResponse
 		return nil, err
 	}
 
-	resp, err := c.post(bundleDownloadEndpoint, payload, false, "")
+	clientIdx := int(p.clientIdx.Add(1)-1) % len(p.clients)
+	client := p.clients[clientIdx]
+
+	req, err := http.NewRequest("POST", p.baseURL+bundleDownloadEndpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/cbor+zstd")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to post to %s: %w", bundleDownloadEndpoint, err)
+	}
+
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, bundleDownloadEndpoint)
 	}
 
 	var r BundleDownloadResponse
-	if err = c.decodeResponse(resp.Body, &r); err != nil {
+	if err = decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
-func (c *Client) DownloadParts(key, domain string, hashes []Hash) (*PartsDownloadResponse, error) {
-	payload, err := c.encodeRequest(&PartsDownloadRequest{
+// DownloadParts downloads parts using a round-robin client selection
+func (p *ParallelDownloader) DownloadParts(key, domain string, hashes []Hash) (*PartsDownloadResponse, error) {
+	// Acquire semaphore
+	p.sem <- struct{}{}
+	defer func() { <-p.sem }()
+
+	// Select client in round-robin fashion
+	clientIdx := int(p.clientIdx.Add(1)-1) % len(p.clients)
+	client := p.clients[clientIdx]
+
+	payload, err := encodeRequest(p.encMode, &PartsDownloadRequest{
 		Request: Request{
 			Key:    key,
 			Domain: domain,
@@ -354,33 +661,24 @@ func (c *Client) DownloadParts(key, domain string, hashes []Hash) (*PartsDownloa
 		return nil, err
 	}
 
-	resp, err := c.post(partsDownloadEndpoint, payload, false, "")
+	req, err := http.NewRequest("POST", p.baseURL+partsDownloadEndpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/cbor+zstd")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to post to %s: %w", partsDownloadEndpoint, err)
+	}
+
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code %d from %s", resp.StatusCode, partsDownloadEndpoint)
 	}
 
 	var r PartsDownloadResponse
-	if err = c.decodeResponse(resp.Body, &r); err != nil {
-		return nil, err
-	}
-	return &r, nil
-}
-
-func (c *Client) ListTeams(key string) (*ListTeamsResponse, error) {
-	payload, err := c.encodeRequest(&Request{
-		Key: key,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.post(listTeamsEndpoint, payload, false, "")
-	if err != nil {
-		return nil, err
-	}
-
-	var r ListTeamsResponse
-	if err = c.decodeResponse(resp.Body, &r); err != nil {
+	if err = decodeResponse(resp.Body, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil

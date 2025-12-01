@@ -15,7 +15,7 @@
           };
           packages.default = pkgs.buildGoModule {
             pname = "xmit";
-            version = "0.4.0";  
+            version = "0.5.0";  
             src = ./.;
             vendorHash = "sha256-beSUbtBgJHlXmgv+cLSOaGP4evXdxN0sOpasw+v8xgs=";
           };
