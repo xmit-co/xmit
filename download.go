@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/fxamacker/cbor/v2"
@@ -50,6 +51,24 @@ func download(key, domain, id, destination string) error {
 	return downloadTraversal(downloader, key, domain, &node, destination)
 }
 
+// safePath ensures the resulting path stays within the base directory
+func safePath(base, name string) (string, error) {
+	joined := filepath.Join(base, name)
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return "", fmt.Errorf("getting absolute base path: %w", err)
+	}
+	absJoined, err := filepath.Abs(joined)
+	if err != nil {
+		return "", fmt.Errorf("getting absolute joined path: %w", err)
+	}
+	// Ensure the joined path is within the base directory
+	if !strings.HasPrefix(absJoined, absBase+string(filepath.Separator)) && absJoined != absBase {
+		return "", fmt.Errorf("path traversal detected: %s escapes %s", name, base)
+	}
+	return joined, nil
+}
+
 func downloadTraversal(downloader *protocol.ParallelDownloader, key, domain string, node *protocol.Node, destination string) error {
 	if node.Hash != nil {
 		hash := *node.Hash
@@ -82,10 +101,17 @@ func downloadTraversal(downloader *protocol.ParallelDownloader, key, domain stri
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 		for name, child := range node.Children {
+			childPath, err := safePath(destination, name)
+			if err != nil {
+				mu.Lock()
+				errors = append(errors, err)
+				mu.Unlock()
+				continue
+			}
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if err := downloadTraversal(downloader, key, domain, child, filepath.Join(destination, name)); err != nil {
+				if err := downloadTraversal(downloader, key, domain, child, childPath); err != nil {
 					mu.Lock()
 					errors = append(errors, err)
 					mu.Unlock()
