@@ -154,8 +154,8 @@ type ListTeamsRequest struct {
 }
 
 type Team struct {
-	ID     string `cbor:"1,keyasint,omitempty"`
-	Name   string `cbor:"2,keyasint,omitempty"`
+	ID   string `cbor:"1,keyasint,omitempty"`
+	Name string `cbor:"2,keyasint,omitempty"`
 }
 
 type ListTeamsResponse struct {
@@ -577,8 +577,8 @@ type ParallelDownloader struct {
 	clients   []*http.Client
 	baseURL   string
 	encMode   cbor.EncMode
-	sem       chan struct{}  // semaphore for concurrent downloads
-	clientIdx atomic.Uint64  // round-robin index for client selection
+	sem       chan struct{} // semaphore for concurrent downloads
+	clientIdx atomic.Uint64 // round-robin index for client selection
 }
 
 // NewParallelDownloader creates a downloader that spreads requests across IPs

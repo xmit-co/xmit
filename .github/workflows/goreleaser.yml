@@ -5,41 +5,63 @@ on:
     branches:
       - main
     tags:
-      - '*'
+      - 'v[0-9]+.[0-9]+.[0-9]+*'  # Only semver tags (v1.2.3, v1.2.3-rc1, etc.)
   pull_request:
     types: [opened, reopened, synchronize]
 
-permissions:
-  contents: write
-
 jobs:
-  goreleaser:
+  # PR and main branch: only build validation, NO goreleaser (prevents hook injection)
+  validate:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: 1.22
 
-      - name: Run GoReleaser release (SKIP publish)
-        uses: goreleaser/goreleaser-action@v5
-        if: startsWith(github.ref, 'refs/tags/') != true
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean --skip=publish --snapshot
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Security scan for dangerous Go patterns
+        run: |
+          if grep -rn '//go:generate\|import "C"\|#cgo' --include='*.go' .; then
+            echo "::error::Detected potentially dangerous Go directive"
+            exit 1
+          fi
 
-      - name: Run GoReleaser release
-        uses: goreleaser/goreleaser-action@v5
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Build
+        run: go build -v ./...
+
+      - name: Test
+        run: go test -v ./...
+
+  # Release: only on semver tags, with environment protection
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: 1.22
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
         with:
           distribution: goreleaser
-          version: latest
+          version: "2.6.1"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
