@@ -1,6 +1,6 @@
 module github.com/xmit-co/xmit
 
-go 1.25.6
+go 1.25.5
 
 require (
 	github.com/fxamacker/cbor/v2 v2.9.0
